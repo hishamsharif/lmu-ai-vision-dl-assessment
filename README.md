@@ -1,5 +1,7 @@
 # PPE Detection System — CS7002NU Assessment 1
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/hishamsharif/lmu-ai-vision-dl-assessment/blob/master/PPE_Detection.ipynb)
+
 Computer vision system for London Building Materials Manufacturing Ltd. that detects
 PPE compliance (helmets, hi-vis vests, goggles) from factory camera feeds.
 
@@ -51,10 +53,13 @@ MyDrive/CS7002NU_PPE/
 
 ## Quick Start (Google Colab)
 
-1. Open `PPE_Detection.ipynb` in Google Colab
-2. Set runtime to **GPU (T4)**: Runtime -> Change runtime type -> T4 GPU
-3. Run the **Setup** cell — mounts Drive, clones repo, installs TF OD API
-4. Execute sections in order (guards skip steps already completed on Drive)
+Click the badge above or open the notebook directly:
+
+> **[Open PPE_Detection.ipynb in Colab](https://colab.research.google.com/github/hishamsharif/lmu-ai-vision-dl-assessment/blob/master/PPE_Detection.ipynb)**
+
+1. Set runtime to **GPU (T4)**: Runtime → Change runtime type → T4 GPU
+2. Run the **Setup** cell — mounts Drive, clones repo, installs dependencies
+3. Execute sections in order (guards skip steps already completed on Drive)
 
 ## Submission Files
 
