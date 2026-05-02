@@ -1,1 +1,0 @@
-# lmu-ai-vision-dl-assessment
