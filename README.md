@@ -25,8 +25,7 @@ ai-vision-ppe-detection/
 ├── config/
 │   ├── hyperparams.py              # 3 hyperparameter configurations
 │   └── pipeline_template.config    # EfficientDet-D0 pipeline template
-└── notebooks/
-    └── CS7002NU_PPE_Detection.ipynb  # Single submission notebook (Sec A + B)
+└── PPE_Detection.ipynb  # Single submission notebook (Sec A + B)   
 ```
 
 ## Google Drive Layout
@@ -52,7 +51,7 @@ MyDrive/CS7002NU_PPE/
 
 ## Quick Start (Google Colab)
 
-1. Open `notebooks/CS7002NU_PPE_Detection.ipynb` in Google Colab
+1. Open `PPE_Detection.ipynb` in Google Colab
 2. Set runtime to **GPU (T4)**: Runtime -> Change runtime type -> T4 GPU
 3. Run the **Setup** cell — mounts Drive, clones repo, installs TF OD API
 4. Execute sections in order (guards skip steps already completed on Drive)
