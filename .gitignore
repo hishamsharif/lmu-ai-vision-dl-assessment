@@ -1,0 +1,31 @@
+# Models and checkpoints
+*.keras
+*.h5
+*.hdf5
+*.ckpt
+*.ckpt.index
+*.ckpt.data-*
+checkpoint
+
+# Datasets and outputs
+*.tfrecord
+*.pbtxt
+datasets/
+outputs/
+exports/
+checkpoints/
+logs/
+
+# Archives
+*.zip
+*.tar.gz
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+
+# Environment
+.env
+.venv/
