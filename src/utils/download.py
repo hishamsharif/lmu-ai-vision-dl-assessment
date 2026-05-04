@@ -10,6 +10,8 @@ Usage (from notebook):
 """
 
 import os
+import shutil
+import tempfile
 import zipfile
 import logging
 
@@ -61,24 +63,40 @@ def _ensure_gdown():
         return gdown
 
 
-def _download_and_extract(file_id: str, zip_name: str, extract_to: str) -> None:
+def _download_and_extract(file_id: str, zip_name: str, dest_dir: str) -> None:
     """
-    Download a public Google Drive zip and extract it to extract_to.
+    Download a public Google Drive zip and place its contents at dest_dir.
 
-    extract_to should be the PARENT of the folder the zip creates internally.
-    For example, if section_a.zip contains a root folder 'section_a/', pass
-    extract_to=dataset_dir so the result lands at dataset_dir/section_a/.
+    dest_dir is the FINAL destination folder (e.g. dataset_dir/section_a/).
+    The function handles both zip structures transparently:
+      - zip with a single root folder  → that folder's contents land in dest_dir
+      - flat zip (no root folder)      → all files land directly in dest_dir
+    Any pre-existing content at dest_dir is removed first to avoid stale
+    double-nested trees from previous extractions.
     """
     gdown = _ensure_gdown()
-    os.makedirs(extract_to, exist_ok=True)
 
     tmp_zip = f"/tmp/{zip_name}"
     logger.info("Downloading %s (id=%s) ...", zip_name, file_id)
     gdown.download(id=file_id, output=tmp_zip, quiet=False)
 
-    logger.info("Extracting %s -> %s", zip_name, extract_to)
-    with zipfile.ZipFile(tmp_zip, "r") as z:
-        z.extractall(extract_to)
+    logger.info("Extracting %s -> %s", zip_name, dest_dir)
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        with zipfile.ZipFile(tmp_zip, "r") as z:
+            z.extractall(tmp_dir)
+
+        # Detect whether the zip had a single root folder.
+        entries = os.listdir(tmp_dir)
+        if len(entries) == 1 and os.path.isdir(os.path.join(tmp_dir, entries[0])):
+            src = os.path.join(tmp_dir, entries[0])   # unwrap the root folder
+        else:
+            src = tmp_dir                              # flat zip — use tmp_dir directly
+
+        # Remove stale destination (handles leftover double-nested trees).
+        if os.path.exists(dest_dir):
+            shutil.rmtree(dest_dir)
+
+        shutil.copytree(src, dest_dir)
 
     os.remove(tmp_zip)
     logger.info("%s ready.", zip_name)
@@ -116,9 +134,7 @@ def download_datasets(dataset_dir: str, subsets: list = None) -> dict:
         if cfg["is_ready"](dest_dir):
             print(f"[{key}] already on Drive — skipping download")
         else:
-            # Extract to dataset_dir (parent) so the zip's internal root folder
-            # lands directly at dest_dir, avoiding double-nesting.
-            _download_and_extract(cfg["file_id"], cfg["zip_name"], dataset_dir)
+            _download_and_extract(cfg["file_id"], cfg["zip_name"], dest_dir)
             print(f"[{key}] extracted -> {dest_dir}")
 
         paths[key] = dest_dir
