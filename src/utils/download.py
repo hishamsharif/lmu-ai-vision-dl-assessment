@@ -34,12 +34,12 @@ DATASETS = {
         "file_id":   "1EAN7Ck2B1SdwUIPisBIe-QPPZ0UKbNoV",
         "zip_name":  "section_b.zip",
         "dest_dir":  "section_b",
-        # Guard: skip download if train/images exists at either expected depth:
-        #   section_b/raw/train/images/  (expected)
-        #   section_b/train/images/      (fallback if zip has no raw/ level)
+        # Guard: skip download if train/ exists at either expected depth:
+        #   section_b/raw/train/  (expected)
+        #   section_b/train/      (fallback if zip has no raw/ level)
         "is_ready":  lambda dest: (
-            os.path.isdir(os.path.join(dest, "raw", "train", "images")) or
-            os.path.isdir(os.path.join(dest, "train", "images"))
+            os.path.isdir(os.path.join(dest, "raw", "train")) or
+            os.path.isdir(os.path.join(dest, "train"))
         ),
     },
 }
