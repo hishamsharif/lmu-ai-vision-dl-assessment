@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 DATASETS = {
     "section_a": {
-        "file_id":   "1ahUeBuNWePuAOg0Y6K8YYdRIVcIxWZM5",
+        "file_id":   "1qhq55YpJr6kLiMiURJtsUEQQkvHtWyKv",
         "zip_name":  "section_a.zip",
         "dest_dir":  "section_a",
         # Guard: skip download if at least one .jpeg already present
