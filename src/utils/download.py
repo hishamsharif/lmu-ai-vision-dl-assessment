@@ -41,15 +41,6 @@ DATASETS = {
             for f in os.listdir(dest)
         ) if os.path.isdir(dest) else False,
     },
-    "section_b": {
-        "file_id":  "1EAN7Ck2B1SdwUIPisBIe-QPPZ0UKbNoV",
-        "zip_name": "section_b.zip",
-        "dest_dir": "section_b",
-        "is_ready": lambda dest: (
-            os.path.isdir(os.path.join(dest, "raw", "train")) or
-            os.path.isdir(os.path.join(dest, "train"))
-        ),
-    },
 }
 
 # ---------------------------------------------------------------------------
