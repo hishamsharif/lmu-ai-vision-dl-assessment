@@ -277,11 +277,24 @@ def download_section_b_assets(drive_root: str) -> dict:
     """
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-    dest = os.path.join(drive_root, "section_b_assets")
+    # Search for an already-present section_b_assets folder in two locations:
+    #   1. drive_root/section_b_assets   (preferred — inside the project folder)
+    #   2. parent(drive_root)/section_b_assets  (MyDrive root — common when the
+    #      folder was added to Drive via the sharing UI rather than downloaded)
+    candidate_paths = [
+        os.path.join(drive_root, "section_b_assets"),
+        os.path.join(os.path.dirname(drive_root), "section_b_assets"),
+    ]
 
-    if _section_b_assets_ready(dest):
-        print("[section_b_assets] already on Drive — skipping download")
-    else:
+    dest = None
+    for path in candidate_paths:
+        if _section_b_assets_ready(path):
+            dest = path
+            print(f"[section_b_assets] found existing assets at {dest}")
+            break
+
+    if dest is None:
+        dest = candidate_paths[0]          # download into the project folder
         print("[section_b_assets] downloading from shared Drive folder ...")
         _download_folder(_SECTION_B_ASSETS_FOLDER_ID, dest)
 
