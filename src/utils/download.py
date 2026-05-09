@@ -143,16 +143,48 @@ def _download_folder(folder_id: str, dest_dir: str) -> None:
     logger.info("Folder download complete -> %s", dest_dir)
 
 
+def _print_tree(base_dir: str, max_depth: int = 3) -> None:
+    """Print the directory tree under base_dir up to max_depth levels."""
+    base_depth = base_dir.rstrip(os.sep).count(os.sep)
+    for root, dirs, files in os.walk(base_dir):
+        depth = root.count(os.sep) - base_depth
+        if depth > max_depth:
+            dirs.clear()
+            continue
+        indent = "  " * depth
+        print(f"{indent}{os.path.basename(root)}/")
+        sub = "  " * (depth + 1)
+        for f in sorted(files)[:10]:          # cap at 10 files per dir
+            print(f"{sub}{f}")
+        if len(files) > 10:
+            print(f"{sub}... ({len(files) - 10} more files)")
+
+
 def _walk_find_asset_dir(base_dir: str) -> str | None:
     """
-    Return the directory that acts as ASSET_DIR:
-    the one that directly contains a non-empty 'figures/' subdirectory.
+    Return the directory that acts as ASSET_DIR — the parent of figures/*.png.
+
+    Checks two layouts:
+      1. <dir>/figures/*.png   (expected: ppe_assets/figures/)
+      2. <dir>/*.png           (flat: PNG files directly in a directory)
+
+    Returns the directory such that os.path.join(asset_dir, 'figures', '*.png')
+    resolves to the figures.  For the flat case, a 'figures' symlink is NOT
+    created; callers should check both ASSET_DIR/figures/ and ASSET_DIR/ itself.
     """
+    # Priority 1: proper figures/ subdirectory
     for root, dirs, _ in os.walk(base_dir):
         if "figures" in dirs:
             fig_path = os.path.join(root, "figures")
             if any(f.endswith(".png") for f in os.listdir(fig_path)):
                 return root
+
+    # Priority 2: PNG files stored flat inside any subdirectory
+    for root, _, files in os.walk(base_dir):
+        pngs = [f for f in files if f.endswith(".png")]
+        if len(pngs) >= 3:       # at least 3 figures present
+            return root          # caller treats this dir as both ASSET_DIR and figures/
+
     return None
 
 
@@ -166,9 +198,8 @@ def _walk_find_model_dir(base_dir: str) -> str | None:
 
 def _walk_find_data_dir(base_dir: str) -> str | None:
     """
-    Return the COCO dataset root:
-    the first directory that has a 'train/' subdirectory containing
-    '_annotations.coco.json'.
+    Return the COCO dataset root — the directory that has train/, valid/, test/
+    subdirectories each containing '_annotations.coco.json'.
     """
     for root, dirs, _ in os.walk(base_dir):
         if "train" in dirs:
@@ -179,10 +210,12 @@ def _walk_find_data_dir(base_dir: str) -> str | None:
 
 
 def _section_b_assets_ready(dest_dir: str) -> bool:
-    """True if both the best model file and at least one figure are already present."""
-    has_model = _walk_find_model_dir(dest_dir) is not None
-    has_figs  = _walk_find_asset_dir(dest_dir) is not None
-    return has_model and has_figs
+    """
+    True if dest_dir is non-empty (download already ran).
+    We re-run detection each time so path resolution stays accurate even if
+    the folder structure changed between sessions.
+    """
+    return os.path.isdir(dest_dir) and bool(os.listdir(dest_dir))
 
 
 # ---------------------------------------------------------------------------
@@ -252,16 +285,33 @@ def download_section_b_assets(drive_root: str) -> dict:
         print("[section_b_assets] downloading from shared Drive folder ...")
         _download_folder(_SECTION_B_ASSETS_FOLDER_ID, dest)
 
+    # ── Diagnostic: show what was downloaded ─────────────────────────────────
+    print("\n[section_b_assets] folder tree:")
+    _print_tree(dest, max_depth=3)
+
+    # ── Detect paths ──────────────────────────────────────────────────────────
     asset_dir = _walk_find_asset_dir(dest)
     model_dir = _walk_find_model_dir(dest)
     data_dir  = _walk_find_data_dir(dest)
 
-    print(f"[section_b_assets] asset_dir -> {asset_dir}")
-    print(f"[section_b_assets] model_dir -> {model_dir}")
-    print(f"[section_b_assets] data_dir  -> {data_dir or '(not found in folder)'}")
+    # If PNGs live flat (no figures/ subdir), treat that dir as figures/ itself
+    # by setting FIGURES_DIR = asset_dir so callers can check both.
+    figures_subdir = None
+    if asset_dir is not None:
+        candidate = os.path.join(asset_dir, "figures")
+        if os.path.isdir(candidate):
+            figures_subdir = candidate
+        else:
+            figures_subdir = asset_dir   # flat layout — PNGs are directly here
+
+    print(f"\n[section_b_assets] asset_dir    -> {asset_dir   or '(not found)'}")
+    print(f"[section_b_assets] figures_dir  -> {figures_subdir or '(not found)'}")
+    print(f"[section_b_assets] model_dir    -> {model_dir   or '(not found)'}")
+    print(f"[section_b_assets] data_dir     -> {data_dir    or '(not found — Roboflow fallback will run)'}")
 
     return {
-        "asset_dir": asset_dir or dest,
-        "model_dir": model_dir or dest,
-        "data_dir":  data_dir,
+        "asset_dir":   asset_dir   or dest,
+        "figures_dir": figures_subdir or dest,
+        "model_dir":   model_dir   or dest,
+        "data_dir":    data_dir,            # None → Roboflow fallback in notebook
     }
