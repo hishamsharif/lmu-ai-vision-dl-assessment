@@ -122,20 +122,22 @@ def _download_and_extract(file_id: str, zip_name: str, dest_dir: str) -> None:
 def _download_folder_filtered(folder_id: str, dest_dir: str,
                                skip_files: set) -> None:
     """
-    Download a public Google Drive folder into dest_dir, skipping any
-    top-level files whose basenames are listed in skip_files.
+    Download a public Google Drive folder into dest_dir, with two behaviours:
+      - Files whose basenames are in skip_files are not copied.
+      - .zip files are extracted in-place (e.g. notebook_assets.zip →
+        dest_dir/notebook_assets/) rather than copied as archives.
 
-    Uses a temporary directory so the caller's dest_dir is only touched
-    after the download completes.  Existing content in dest_dir is preserved
-    (merge behaviour) — only new items are copied in.
+    Uses a temporary directory so dest_dir is only written after the full
+    download completes.  Existing content in dest_dir is preserved (merge).
     """
     gdown = _ensure_gdown()
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         logger.info("Downloading Drive folder %s ...", folder_id)
+        # gdown creates a subfolder named after the Drive folder inside tmp_dir.
         gdown.download_folder(id=folder_id, output=tmp_dir, quiet=False)
 
-        # gdown may wrap contents in a subfolder named after the Drive folder.
+        # Unwrap single root subfolder if present.
         entries = os.listdir(tmp_dir)
         if len(entries) == 1 and os.path.isdir(os.path.join(tmp_dir, entries[0])):
             src_root = os.path.join(tmp_dir, entries[0])
@@ -143,22 +145,36 @@ def _download_folder_filtered(folder_id: str, dest_dir: str,
             src_root = tmp_dir
 
         os.makedirs(dest_dir, exist_ok=True)
-        skipped = []
+        skipped, extracted = [], []
+
         for item in os.listdir(src_root):
             if item in skip_files:
                 skipped.append(item)
                 continue
+
             src = os.path.join(src_root, item)
-            dst = os.path.join(dest_dir, item)
-            if os.path.isdir(src):
+
+            if item.lower().endswith(".zip"):
+                # Extract notebook_assets.zip → dest_dir/notebook_assets/
+                stem       = os.path.splitext(item)[0]
+                extract_to = os.path.join(dest_dir, stem)
+                if os.path.exists(extract_to):
+                    shutil.rmtree(extract_to)
+                with zipfile.ZipFile(src, "r") as z:
+                    z.extractall(extract_to)
+                extracted.append(f"{item} -> {stem}/")
+            elif os.path.isdir(src):
+                dst = os.path.join(dest_dir, item)
                 if os.path.exists(dst):
                     shutil.rmtree(dst)
                 shutil.copytree(src, dst)
             else:
-                shutil.copy2(src, dst)
+                shutil.copy2(src, os.path.join(dest_dir, item))
 
         if skipped:
-            logger.info("Skipped (already in section_a): %s", ", ".join(skipped))
+            print(f"[section_b_assets] skipped (already in section_a): {', '.join(skipped)}")
+        if extracted:
+            print(f"[section_b_assets] extracted: {', '.join(extracted)}")
         logger.info("Folder contents merged into %s", dest_dir)
 
 
