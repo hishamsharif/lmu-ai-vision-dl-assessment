@@ -9,14 +9,14 @@ All public Drive links are accessed without authentication via gdown.
 Usage (from notebook):
     from src.utils.download import download_datasets, download_section_b_assets
 
-    # Section A + B YOLO datasets (zip files)
+    # Section A images + Section B YOLO dataset (zip files → datasets/)
     paths = download_datasets(dataset_dir)
 
-    # Section B pre-trained models + pre-computed figures + COCO dataset
-    b = download_section_b_assets(drive_root)
-    ASSET_DIR = b['asset_dir']   # figures/
-    MODEL_DIR = b['model_dir']   # .keras files
-    DATA_DIR  = b['data_dir']    # COCO train/valid/test
+    # Section B pre-trained model + pre-computed figures (shared folder → section_b/)
+    b = download_section_b_assets(dataset_dir)
+    ASSET_DIR = b['asset_dir']   # parent of figures/
+    MODEL_DIR = b['model_dir']   # directory holding *.keras files
+    DATA_DIR  = b['data_dir']    # COCO dataset root (None → Roboflow fallback)
 """
 
 import os
@@ -29,7 +29,6 @@ logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Zip-based dataset registry (Section A images, Section B YOLO dataset)
-# Update file IDs here if the Drive files are replaced.
 # ---------------------------------------------------------------------------
 
 DATASETS = {
@@ -37,7 +36,6 @@ DATASETS = {
         "file_id":  "1qhq55YpJr6kLiMiURJtsUEQQkvHtWyKv",
         "zip_name": "section_a.zip",
         "dest_dir": "section_a",
-        # Guard: skip if at least one image is already present.
         "is_ready": lambda dest: any(
             f.lower().endswith(('.jpeg', '.jpg', '.png'))
             for f in os.listdir(dest)
@@ -47,7 +45,6 @@ DATASETS = {
         "file_id":  "1EAN7Ck2B1SdwUIPisBIe-QPPZ0UKbNoV",
         "zip_name": "section_b.zip",
         "dest_dir": "section_b",
-        # Guard: skip if train/ exists at either expected depth.
         "is_ready": lambda dest: (
             os.path.isdir(os.path.join(dest, "raw", "train")) or
             os.path.isdir(os.path.join(dest, "train"))
@@ -56,25 +53,19 @@ DATASETS = {
 }
 
 # ---------------------------------------------------------------------------
-# Folder-based asset registry (Section B pre-trained models + figures + COCO)
-# Shared by Udam / Tharinda — publicly accessible without authentication.
+# Shared folder — Section B pre-trained model + pre-computed figures
+# Shared by Udam / Tharinda (publicly accessible, no authentication required).
+# Section A images (imgA/B/C.jpg) present in the folder are skipped — already
+# in datasets/section_a/.
 # ---------------------------------------------------------------------------
 
-# Top-level Google Drive folder ID for all Section B assets.
 _SECTION_B_ASSETS_FOLDER_ID = "1gPgz8HdcNfSIT62ooKn2wZJUSiwV1tkr"
 
-# Name of the best model checkpoint expected inside MODEL_DIR.
-BEST_MODEL_NAME = "R6_S_oneCycle_weighted_best.keras"
+# Files in the shared folder that duplicate Section A content — skip them.
+_SKIP_FILENAMES = {"imgA.jpg", "imgB.jpg", "imgC.jpg"}
 
-# Expected figure filenames inside ASSET_DIR/figures/.
-EXPECTED_FIGURES = [
-    "class_distribution.png",
-    "training_curves_all.png",
-    "training_curves_top3.png",
-    "confusion_matrices.png",
-    "roc_curves.png",
-    "sample_predictions.png",
-]
+# Best model checkpoint name (used as the ready-guard).
+BEST_MODEL_NAME = "R6_S_oneCycle_weighted_best.keras"
 
 
 # ---------------------------------------------------------------------------
@@ -98,10 +89,10 @@ def _download_and_extract(file_id: str, zip_name: str, dest_dir: str) -> None:
     """
     Download a public Google Drive zip and place its contents at dest_dir.
 
-    Handles both zip structures transparently:
-      - zip with a single root folder  → that folder's contents land in dest_dir
-      - flat zip (no root folder)      → all files land directly in dest_dir
-    Pre-existing content at dest_dir is removed first to avoid stale nested trees.
+    Handles both zip structures:
+      - single root folder inside zip  → contents land directly in dest_dir
+      - flat zip                       → files land directly in dest_dir
+    Pre-existing dest_dir is removed to avoid stale nested trees.
     """
     gdown = _ensure_gdown()
 
@@ -116,9 +107,9 @@ def _download_and_extract(file_id: str, zip_name: str, dest_dir: str) -> None:
 
         entries = os.listdir(tmp_dir)
         if len(entries) == 1 and os.path.isdir(os.path.join(tmp_dir, entries[0])):
-            src = os.path.join(tmp_dir, entries[0])   # unwrap single root folder
+            src = os.path.join(tmp_dir, entries[0])
         else:
-            src = tmp_dir                              # flat zip
+            src = tmp_dir
 
         if os.path.exists(dest_dir):
             shutil.rmtree(dest_dir)
@@ -128,19 +119,47 @@ def _download_and_extract(file_id: str, zip_name: str, dest_dir: str) -> None:
     logger.info("%s ready.", zip_name)
 
 
-def _download_folder(folder_id: str, dest_dir: str) -> None:
+def _download_folder_filtered(folder_id: str, dest_dir: str,
+                               skip_files: set) -> None:
     """
-    Download an entire public Google Drive folder into dest_dir using gdown.
+    Download a public Google Drive folder into dest_dir, skipping any
+    top-level files whose basenames are listed in skip_files.
 
-    gdown.download_folder recreates the Drive folder structure under dest_dir,
-    so dest_dir becomes the parent of whatever top-level directories the Drive
-    folder contains (e.g. dest_dir/ppe_assets/, dest_dir/ppe_models/, ...).
+    Uses a temporary directory so the caller's dest_dir is only touched
+    after the download completes.  Existing content in dest_dir is preserved
+    (merge behaviour) — only new items are copied in.
     """
     gdown = _ensure_gdown()
-    os.makedirs(dest_dir, exist_ok=True)
-    logger.info("Downloading Drive folder %s -> %s", folder_id, dest_dir)
-    gdown.download_folder(id=folder_id, output=dest_dir, quiet=False)
-    logger.info("Folder download complete -> %s", dest_dir)
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        logger.info("Downloading Drive folder %s ...", folder_id)
+        gdown.download_folder(id=folder_id, output=tmp_dir, quiet=False)
+
+        # gdown may wrap contents in a subfolder named after the Drive folder.
+        entries = os.listdir(tmp_dir)
+        if len(entries) == 1 and os.path.isdir(os.path.join(tmp_dir, entries[0])):
+            src_root = os.path.join(tmp_dir, entries[0])
+        else:
+            src_root = tmp_dir
+
+        os.makedirs(dest_dir, exist_ok=True)
+        skipped = []
+        for item in os.listdir(src_root):
+            if item in skip_files:
+                skipped.append(item)
+                continue
+            src = os.path.join(src_root, item)
+            dst = os.path.join(dest_dir, item)
+            if os.path.isdir(src):
+                if os.path.exists(dst):
+                    shutil.rmtree(dst)
+                shutil.copytree(src, dst)
+            else:
+                shutil.copy2(src, dst)
+
+        if skipped:
+            logger.info("Skipped (already in section_a): %s", ", ".join(skipped))
+        logger.info("Folder contents merged into %s", dest_dir)
 
 
 def _print_tree(base_dir: str, max_depth: int = 3) -> None:
@@ -152,9 +171,9 @@ def _print_tree(base_dir: str, max_depth: int = 3) -> None:
             dirs.clear()
             continue
         indent = "  " * depth
-        print(f"{indent}{os.path.basename(root)}/")
+        print(f"{indent}{os.path.basename(root) or root}/")
         sub = "  " * (depth + 1)
-        for f in sorted(files)[:10]:          # cap at 10 files per dir
+        for f in sorted(files)[:10]:
             print(f"{sub}{f}")
         if len(files) > 10:
             print(f"{sub}... ({len(files) - 10} more files)")
@@ -162,29 +181,21 @@ def _print_tree(base_dir: str, max_depth: int = 3) -> None:
 
 def _walk_find_asset_dir(base_dir: str) -> str | None:
     """
-    Return the directory that acts as ASSET_DIR — the parent of figures/*.png.
+    Return the ASSET_DIR — the directory that directly contains figures/*.png.
 
     Checks two layouts:
-      1. <dir>/figures/*.png   (expected: ppe_assets/figures/)
-      2. <dir>/*.png           (flat: PNG files directly in a directory)
-
-    Returns the directory such that os.path.join(asset_dir, 'figures', '*.png')
-    resolves to the figures.  For the flat case, a 'figures' symlink is NOT
-    created; callers should check both ASSET_DIR/figures/ and ASSET_DIR/ itself.
+      1. <dir>/figures/*.png  (standard: notebook_assets/figures/)
+      2. <dir>/*.png          (flat: PNGs stored directly in a directory)
     """
-    # Priority 1: proper figures/ subdirectory
     for root, dirs, _ in os.walk(base_dir):
         if "figures" in dirs:
             fig_path = os.path.join(root, "figures")
             if any(f.endswith(".png") for f in os.listdir(fig_path)):
                 return root
-
-    # Priority 2: PNG files stored flat inside any subdirectory
+    # Fallback: flat layout
     for root, _, files in os.walk(base_dir):
-        pngs = [f for f in files if f.endswith(".png")]
-        if len(pngs) >= 3:       # at least 3 figures present
-            return root          # caller treats this dir as both ASSET_DIR and figures/
-
+        if sum(1 for f in files if f.endswith(".png")) >= 3:
+            return root
     return None
 
 
@@ -198,8 +209,8 @@ def _walk_find_model_dir(base_dir: str) -> str | None:
 
 def _walk_find_data_dir(base_dir: str) -> str | None:
     """
-    Return the COCO dataset root — the directory that has train/, valid/, test/
-    subdirectories each containing '_annotations.coco.json'.
+    Return the COCO dataset root — directory containing train/ with
+    _annotations.coco.json.
     """
     for root, dirs, _ in os.walk(base_dir):
         if "train" in dirs:
@@ -207,15 +218,6 @@ def _walk_find_data_dir(base_dir: str) -> str | None:
             if os.path.isfile(ann):
                 return root
     return None
-
-
-def _section_b_assets_ready(dest_dir: str) -> bool:
-    """
-    True if dest_dir is non-empty (download already ran).
-    We re-run detection each time so path resolution stays accurate even if
-    the folder structure changed between sessions.
-    """
-    return os.path.isdir(dest_dir) and bool(os.listdir(dest_dir))
 
 
 # ---------------------------------------------------------------------------
@@ -227,7 +229,7 @@ def download_datasets(dataset_dir: str, subsets: list = None) -> dict:
     Download and extract Section A / B zip datasets into dataset_dir.
 
     Args:
-        dataset_dir: Root folder for datasets (typically Drive/CS7002NU_PPE/datasets/).
+        dataset_dir: Root folder for datasets (e.g. Drive/CS7002NU_PPE/datasets/).
         subsets:     Keys to download, e.g. ['section_a'].  Defaults to all.
 
     Returns:
@@ -256,75 +258,64 @@ def download_datasets(dataset_dir: str, subsets: list = None) -> dict:
     return paths
 
 
-def download_section_b_assets(drive_root: str) -> dict:
+def download_section_b_assets(dataset_dir: str) -> dict:
     """
-    Download Section B pre-trained models, pre-computed figures, and COCO dataset
-    from the team's shared public Google Drive folder.
+    Download Section B pre-trained model and pre-computed figures from the
+    team's shared public Google Drive folder into dataset_dir/section_b/.
 
-    All content is saved under drive_root/section_b_assets/ so it persists
-    across Colab sessions.  A guard check skips the download if the assets
-    are already present.
+    Content is merged alongside the existing YOLO dataset (raw/).
+    Section A images (imgA/B/C.jpg) present in the shared folder are skipped.
+    The COCO dataset is NOT included in the shared folder; DATA_DIR will be
+    None and the Roboflow fallback in the notebook will handle it.
 
     Args:
-        drive_root: Top-level Drive directory (e.g. /content/drive/MyDrive/CS7002NU_PPE).
+        dataset_dir: datasets/ root (e.g. Drive/CS7002NU_PPE/datasets/).
 
     Returns:
         dict with keys:
-            asset_dir  — parent of figures/  (pass as ASSET_DIR in notebook)
-            model_dir  — directory holding *.keras files  (pass as MODEL_DIR)
-            data_dir   — COCO dataset root with train/valid/test  (pass as DATA_DIR)
-                         None if the shared folder does not include the dataset.
+            asset_dir   — parent of figures/  (set as ASSET_DIR in notebook)
+            figures_dir — directory holding *.png files
+            model_dir   — directory holding *.keras files  (set as MODEL_DIR)
+            data_dir    — COCO dataset root, or None
     """
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-    # Search for an already-present section_b_assets folder in two locations:
-    #   1. drive_root/section_b_assets   (preferred — inside the project folder)
-    #   2. parent(drive_root)/section_b_assets  (MyDrive root — common when the
-    #      folder was added to Drive via the sharing UI rather than downloaded)
-    candidate_paths = [
-        os.path.join(drive_root, "section_b_assets"),
-        os.path.join(os.path.dirname(drive_root), "section_b_assets"),
-    ]
+    section_b_dir = os.path.join(dataset_dir, "section_b")
 
-    dest = None
-    for path in candidate_paths:
-        if _section_b_assets_ready(path):
-            dest = path
-            print(f"[section_b_assets] found existing assets at {dest}")
-            break
+    # Guard: skip download if the best model is already present in section_b/
+    model_dir = _walk_find_model_dir(section_b_dir)
+    if model_dir is not None:
+        print(f"[section_b_assets] already in {section_b_dir} — skipping download")
+    else:
+        print(f"[section_b_assets] downloading shared folder into {section_b_dir} ...")
+        _download_folder_filtered(
+            _SECTION_B_ASSETS_FOLDER_ID,
+            section_b_dir,
+            skip_files=_SKIP_FILENAMES,
+        )
+        model_dir = _walk_find_model_dir(section_b_dir)
 
-    if dest is None:
-        dest = candidate_paths[0]          # download into the project folder
-        print("[section_b_assets] downloading from shared Drive folder ...")
-        _download_folder(_SECTION_B_ASSETS_FOLDER_ID, dest)
-
-    # ── Diagnostic: show what was downloaded ─────────────────────────────────
-    print("\n[section_b_assets] folder tree:")
-    _print_tree(dest, max_depth=3)
+    # ── Diagnostic tree ───────────────────────────────────────────────────────
+    print(f"\n[section_b_assets] section_b/ tree:")
+    _print_tree(section_b_dir, max_depth=3)
 
     # ── Detect paths ──────────────────────────────────────────────────────────
-    asset_dir = _walk_find_asset_dir(dest)
-    model_dir = _walk_find_model_dir(dest)
-    data_dir  = _walk_find_data_dir(dest)
+    asset_dir = _walk_find_asset_dir(section_b_dir)
+    data_dir  = _walk_find_data_dir(section_b_dir)
 
-    # If PNGs live flat (no figures/ subdir), treat that dir as figures/ itself
-    # by setting FIGURES_DIR = asset_dir so callers can check both.
     figures_subdir = None
     if asset_dir is not None:
         candidate = os.path.join(asset_dir, "figures")
-        if os.path.isdir(candidate):
-            figures_subdir = candidate
-        else:
-            figures_subdir = asset_dir   # flat layout — PNGs are directly here
+        figures_subdir = candidate if os.path.isdir(candidate) else asset_dir
 
-    print(f"\n[section_b_assets] asset_dir    -> {asset_dir   or '(not found)'}")
-    print(f"[section_b_assets] figures_dir  -> {figures_subdir or '(not found)'}")
-    print(f"[section_b_assets] model_dir    -> {model_dir   or '(not found)'}")
-    print(f"[section_b_assets] data_dir     -> {data_dir    or '(not found — Roboflow fallback will run)'}")
+    print(f"\n[section_b_assets] asset_dir   -> {asset_dir    or '(not found)'}")
+    print(f"[section_b_assets] figures_dir -> {figures_subdir or '(not found)'}")
+    print(f"[section_b_assets] model_dir   -> {model_dir     or '(not found)'}")
+    print(f"[section_b_assets] data_dir    -> {data_dir      or '(not found — Roboflow fallback will run)'}")
 
     return {
-        "asset_dir":   asset_dir   or dest,
-        "figures_dir": figures_subdir or dest,
-        "model_dir":   model_dir   or dest,
-        "data_dir":    data_dir,            # None → Roboflow fallback in notebook
+        "asset_dir":   asset_dir    or section_b_dir,
+        "figures_dir": figures_subdir or section_b_dir,
+        "model_dir":   model_dir    or section_b_dir,
+        "data_dir":    data_dir,
     }
