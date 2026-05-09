@@ -155,10 +155,12 @@ def _download_folder_filtered(folder_id: str, dest_dir: str,
                     z.extractall(extract_to)
                 extracted.append(f"{item} -> {stem}/")
             elif os.path.isdir(src):
-                dst = os.path.join(dest_dir, item)
-                if os.path.exists(dst):
-                    shutil.rmtree(dst)
-                shutil.copytree(src, dst)
+                # Flatten: copy files from the Drive subfolder directly into
+                # dest_dir (e.g. ppe_models/R6_S_*.keras → dest_dir/R6_S_*.keras)
+                for fname in os.listdir(src):
+                    fsrc = os.path.join(src, fname)
+                    if os.path.isfile(fsrc):
+                        shutil.copy2(fsrc, os.path.join(dest_dir, fname))
             else:
                 shutil.copy2(src, os.path.join(dest_dir, item))
 
